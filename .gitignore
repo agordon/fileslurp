@@ -1,0 +1,7 @@
+*.o
+.dub
+source/fileslurp.o
+source/fileslurp
+source/fileslurp.html
+libfileslurp.*
+*.swp
