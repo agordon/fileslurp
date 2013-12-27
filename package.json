@@ -2,7 +2,7 @@
 	"name": "fileslurp",
 	"description": "structured text files loading library",
 	"copyright": "Copyright © 2013, A. Gordon",
-	"homepage": "http://github.com/agordon/textslurp",
+	"homepage": "http://github.com/agordon/fileslurp",
 	"license": "BSD 3-Clause",
 	"authors": ["A. Gordon", "JM (wrote 'byLineFast')"],
 	"dependencies": {
