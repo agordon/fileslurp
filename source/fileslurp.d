@@ -1,8 +1,12 @@
 module fileslurp;
 
+import std.typetuple;
+import std.traits;
+import std.typecons;
 import std.string;
-import std.array;
-import std.exception;
+import std.array : empty;
+import std.conv: text;
+import std.exception : Exception, assertThrown;
 import std.stdio;
 
 @safe pure void consume_delimiter(S, D)(ref S input_str, const D delimiter)
@@ -128,16 +132,16 @@ unittest
 	assert(quotemeta('t')=="t");
 }
 
-@safe size_t parse_delimited_string(DATA)(const string input, const char delimiter, ref DATA arg)
+@safe void parse_delimited_string(DATA)(const string input, const char delimiter, ref DATA arg)
 {
-	//const char delimiter = '\t';
 	string remaining_input = input;
 
 	foreach (i, T; DATA.Types)
 	{
+		//TODO: Handle other types (for now, only numeric or strings)
 		static if (isNumeric!T) {
 			try {
-				// consume a numeric/boolean field
+				// consume a numeric field
 				arg[i] = std.conv.parse!T(remaining_input);
 			} catch ( std.conv.ConvException e ) {
 				throw new Exception(text("failed to parse numeric value in field ", i+1,
@@ -171,7 +175,71 @@ unittest
 		}
 		
 	}
-	return 0;
+}
+
+unittest
+{
+	Tuple!(int,string,int) a;
+	parse_delimited_string("1 2 3",' ',a);
+	assert(a[0]==1 && a[1]=="2" && a[2]==3);
+
+	parse_delimited_string("1\t2\t3",'\t',a);
+	assert(a[0]==1 && a[1]=="2" && a[2]==3);
+
+	//Extra delimiter at the end of the line is not OK
+	assertThrown!Exception(parse_delimited_string("1 2 3 ",' ',a));
+
+	//Invalid number on first field (parse!int should fail)
+	assertThrown!Exception(parse_delimited_string(".1 2 3",' ',a));
+
+	//Extra characters in field 1 (After successfull parse!int)
+	assertThrown!Exception(parse_delimited_string("1. 2 3",' ',a));
+
+	//Line contains too many fields
+	assertThrown!Exception(parse_delimited_string("1 2 3 4",' ',a));
+
+	//Line is too short
+	assertThrown!Exception(parse_delimited_string("1 2",' ',a));
+
+	//non-space/tab delimiter is fine
+	parse_delimited_string("1|2|3",'|',a);
+	assert(a[0]==1 && a[1]=="2" && a[2]==3);
+	parse_delimited_string("1|  2  |3",'|',a);
+	assert(a[0]==1 && a[1]=="  2  " && a[2]==3);
+
+	//Spaces are bad (and not ignored) if delimiter is not space (for numeric fields)
+	assertThrown!Exception(parse_delimited_string("1 |2|3",'|',a));
+	assertThrown!Exception(parse_delimited_string(" 1|2|3",'|',a));
+	assertThrown!Exception(parse_delimited_string(" 1|2| 3",'|',a));
+	assertThrown!Exception(parse_delimited_string("1|2|3 ",'|',a));
+
+	//For string fields, empty values are not OK (different from formattedRead())
+	assertThrown!Exception(parse_delimited_string("1||3",'|',a));
+
+	//For string fields, last value can't be empty (different from formattedRead())
+	Tuple!(int,string,string) b;
+	assertThrown!Exception(parse_delimited_string("1|2|",'|',b));
+
+	//One field is OK
+	Tuple!(string) c;
+	parse_delimited_string("foo",' ',c);
+	assert(c[0]=="foo");
+
+	//Fields that are OK for floating-point types should not work for integers (extra characters)
+	Tuple!(real,int) d;
+	parse_delimited_string("4.5 9",' ',d);
+	assert(d[0]==4.5 && d[1]==9);
+	Tuple!(int,real) e;
+	assertThrown!Exception(parse_delimited_string("4.5 9",' ',e));
+
+	//scientific notation - OK for floating-point types
+	Tuple!(double,double) f;
+	parse_delimited_string("-0.004e3 +4.3e10",' ',f);
+	assert(f[0]==-0.004e3 && f[1]==43e9);
+
+	//Scientific notation - fails for integars
+	Tuple!(int,int) g;
+	assertThrown!Exception(parse_delimited_string("-0.004e3 +4.3e10",' ',g));
 }
 
 
