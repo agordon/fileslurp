@@ -64,6 +64,12 @@ unittest
 	t = consume_string_field(s,'\t');
 	assert(s=="");
 	assert(t=="");
+
+	// No delimiter in string - treat it as a valid single field
+	s = "hello world";
+	t = consume_string_field(s,'\t');
+	assert(s=="");
+	assert(t=="hello world");
 }
 
 @safe pure S quotemeta(S)(const S s)
@@ -74,6 +80,28 @@ unittest
 		'\0' : "<NULL>" ];
 
 	return translate(s,meta);
+}
+
+unittest
+{
+	string s="1\t2\t3\n";
+	auto t = quotemeta(s);
+	assert(t=="1<TAB>2<TAB>3<LF>");
+
+	//String with null
+	s="1\0002";
+	t = quotemeta(s);
+	assert(t=="1<NULL>2");
+
+	//Empty string
+	s="";
+	t = quotemeta(s);
+	assert(t=="");
+
+	// Normal string
+	s="1\\t2";
+	t = quotemeta(s);
+	assert(t=="1\\t2");
 }
 
 @safe pure string quotemeta(const char c)
@@ -89,6 +117,15 @@ unittest
 	char[] tmp;
 	tmp = tmp ~ c;
 	return tmp;
+}
+
+unittest
+{
+	assert(quotemeta('\t')=="<TAB>");
+	assert(quotemeta('\r')=="<CR>");
+	assert(quotemeta('\n')=="<LF>");
+	assert(quotemeta('\00')=="<NULL>");
+	assert(quotemeta('t')=="t");
 }
 
 @safe size_t parse_delimited_string(DATA)(const string input, const char delimiter, ref DATA arg)
