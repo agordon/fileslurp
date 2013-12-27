@@ -1,3 +1,12 @@
+/**
+Generic Loader for delimited text files.
+
+Copyright: Copyright 2013 the authors.
+
+License: BSD 3-Clause
+
+Authors: $(WEB https://github.com/agordon/ , A. Gordon), JM
+*/
 module fileslurp;
 
 import std.typetuple;
@@ -11,6 +20,8 @@ import std.exception;
 import std.stdio;
 import std.file;
 import std.range;
+
+private {
 
 @safe pure void consume_delimiter(S, D)(ref S input_str, const D delimiter)
 {
@@ -135,6 +146,40 @@ unittest
 	assert(quotemeta('t')=="t");
 }
 
+} // private
+
+
+/**
+Parses string $(D input), delimited by character $(D delimiter), into a tuple of variables $(arg).
+
+Returns:
+On success, the function returns nothing (void), and all the members of the tuple are populated.
+
+Throws:
+$(XREF std.exception.Exception) on failure to correctly parse the string.   
+
+Example:
+----
+string s = "Hello World 42";
+Tuple!(string,string,int) t;
+parse_delimited_string(s,' ',t);
+assert(t[0]=="Hello");
+assert(t[1]=="World");
+assert(t[2]==42);
+----
+
+Notes:
+$(OL
+	$(LI Parsing is much stricter (and less tolerant) than $(XREF std.format.formattedRead))
+	$(LI White-space is never automatically skipped)
+	$(LI A space delimiter consume only space character (ASCII 20), not TAB (ASCII 9))
+	$(LI Multiple consecutive delimiters are not consumed as one delimiter (e.g. "1\t\t\t2" is considerd a string with four fields - it has three delimiters. It will throw an exception because empty fields are not allowed).)
+	$(LI All fields must exist (i.e. if the tuple $(D arg) has 3 members, the $(D input) string must contain two delimiters and three valid values))
+	$(LI For a string field, empty values are not acceptable, will throw an exception)
+	$(LI Extra characters at the end of a field or the line will throw an exception)
+)
+
+*/
 @safe void parse_delimited_string(DATA)(const string input, const char delimiter, ref DATA arg)
 {
 	string remaining_input = input;
@@ -246,6 +291,50 @@ unittest
 }
 
 
+/**
+Loads a delimited text file, line-by-line, parses the line into fields, and calls a delegate/function for each line.
+
+Returns:
+On success, the function returns nothing (void), the call back function have been called for every line.
+
+Throws:
+$(XREF std.exception.Exception) on failure to correctly parse a line.
+$(XREF std.file.FileException) on I/O failures.
+
+Example:
+----
+// Load a text file with three numeric columns,
+// Store the tuple in an array
+// (NOTE: this is a naive, inefficient way to populate an array, see NOTES)
+alias Tuple!(int,int,int) T;
+T[] t;
+slurpy!( T,           // The number and types of the (expected) fields in the file
+	 delegate(x) { t ~= x; }, // for each line read, call this function. X will be of type T.
+	 '\t'         // The delimiter (default = TAB)
+       )("file.txt"); // The file name to read.
+----
+
+Example:
+----
+// Load a text file with three numeric columns,
+// Use the second column as a KEY and the third column as the VALUE.
+alias Tuple!(int,int,int) T;
+int[int] data;
+slurpy!( T,              // The number and types of the (expected) fields in the file
+	 delegate(x) {   // for each line read, call this function. X will be of type T.
+	     data[x[1]] = x[2] ;
+	 },	
+	 '\t'             // The delimiter (default = TAB)
+       )("file.txt");    // The file name to read.
+----
+
+Notes:
+$(OL
+	$(LI See $(LREF parse_delimited_string) for details about parsing the delimited lines of the fiile)
+	$(LO
+)
+
+*/
 template slurpy(MEMBERS, alias STORE_FUNCTION, char delimiter='\t')
 {
 	static assert (isTuple!MEMBERS,"slurpy: 1st template parameter must be a Tuple with the expected columns in the file"); 
@@ -307,6 +396,25 @@ unittest
 }
 
 
+/**
+Loads a delimited text file, line-by-line, parses the line into fields, returns an array of fields.
+
+Returns:
+On success, returns an array of tuples, based on template parameters.
+
+Throws:
+$(XREF std.exception.Exception) on failure to correctly parse a line.
+$(XREF std.file.FileException) on I/O failures.
+
+Example:
+----
+// Load a text file, tab-delimited, with three numeric columns.
+
+auto data = slurpy_array!('\t', int,int,int)("file.txt");
+
+// data[0] will be of type Tuple!(int,int,int)
+----
+*/
 Select!(Types.length == 1, Types[0][], Tuple!(Types)[])
 slurpy_array(char delimiter, Types...)(string filename)
 {
