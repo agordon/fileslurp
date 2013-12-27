@@ -1,0 +1,12 @@
+{
+	"name": "fileslurp",
+	"description": "structured text files loading library",
+	"copyright": "Copyright © 2013, A. Gordon",
+	"homepage": "http://github.com/agordon/textslurp",
+	"license": "BSD 3-Clause",
+	"authors": ["A. Gordon"],
+	"dependencies": {
+	},
+	"targetType": "library",
+	"targetName": "fileslurp"
+}
