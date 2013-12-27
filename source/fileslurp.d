@@ -3,11 +3,14 @@ module fileslurp;
 import std.typetuple;
 import std.traits;
 import std.typecons;
+import std.functional;
 import std.string;
-import std.array : empty;
+import std.array ;
 import std.conv: text;
-import std.exception : Exception, assertThrown;
+import std.exception;
 import std.stdio;
+import std.file;
+import std.range;
 
 @safe pure void consume_delimiter(S, D)(ref S input_str, const D delimiter)
 {
@@ -275,14 +278,236 @@ template slurpy(MEMBERS, alias STORE_FUNCTION, char delimiter='\t')
 	}
 }
 
+unittest
+{
+	import std.file ;
+	auto deleteme = testFilename();
+	write(deleteme,"1 2 3\n4 5 6\n");
+	scope(exit) { assert(exists(deleteme)); remove(deleteme); }
+
+	//Load a text file, with three fields, delimiter with spaces.
+	alias Tuple!(int,int,int) T;
+	T[] t;
+	slurpy!( T,         // The number and types of the (expected) fields in the file
+		 delegate(x) { t ~= x; }, // for each line read, call this function. X will be of type T.
+		 ' '        // The delimiter (default = TAB)
+	       )(deleteme); // The file name to read.
+	assert(t.length==2);
+	assert(t[0] == tuple(1,2,3));
+	assert(t[1] == tuple(4,5,6));
+
+	//Any kind of invalid data should throw an exception
+	//NOTE: the delegate function does nothing, because we don't care about the data
+	//      in this test.
+	//NOTE: see more test cases for failed parsing in the unittest of 'parse_delimited_string'.
+	auto deleteme2 = testFilename() ~ ".2";
+	write(deleteme2,"1 Foo 3\n4 5 6\n"); // conversion will fail in the first line
+	scope(exit) { assert(exists(deleteme2)); remove(deleteme2); }
+	assertThrown!Exception( slurpy!( T, (x) => {}, ' ')(deleteme2)) ;
+}
+
+
 Select!(Types.length == 1, Types[0][], Tuple!(Types)[])
-slurpy_array(Types...)(string filename)
+slurpy_array(char delimiter, Types...)(string filename)
 {
     typeof(return) result;
     auto app = appender!(typeof(return))();
     alias ElementType!(typeof(return)) MEMBERS;
 
-    slurpy! ( MEMBERS, delegate (x) { app.put(x); } ) (filename);
+    slurpy! ( MEMBERS, delegate (x) { app.put(x); }, delimiter ) (filename);
 
     return app.data;
+}
+
+unittest
+{
+	import std.file ;
+	auto deleteme = testFilename() ~ ".3";
+	write(deleteme,"1 2 3\n4 5 6\n");
+	scope(exit) { assert(exists(deleteme)); remove(deleteme); }
+
+	//Load a text file, with three fields, delimiter with spaces.
+	auto t = slurpy_array!( ' ', // delimiter
+			        int, int, int // expected fields in the text file
+			      )(deleteme);
+	assert(t.length==2);
+	assert(t[0] == tuple(1,2,3));
+	assert(t[1] == tuple(4,5,6));
+}
+
+version(unittest) string testFilename(string file = __FILE__, size_t line = __LINE__)
+{
+	import std.path;
+	import std.process;
+	return text("deleteme-.", getpid(), ".", baseName(file), ".", line);
+}
+
+/*
+On Thursday, 16 May 2013 at 10:35:12 UTC, Dicebot wrote:
+> Want to bring into discussion people that are not on Google+.
+> Samuel recently has posted there some simple experiments with
+> bioinformatics and bad performance of Phobos-based snippet has
+> surprised me.
+>
+> I did explore issue a bit and reported results in a blog post
+> (snippets are really small and simple) :
+> http://dicebot.blogspot.com/2013/05/short-performance-tuning-story.html
+>
+> One open question remains though - can D/Phobos do better here?
+> Can some changes be done to Phobos functions in question to
+> improve performance or creating bioinformatics-specialized
+> library is only practical solution?
+
+I bet the problem is in readln. Currently, File.byLine() and
+readln() are extremely slow, because they call fgetc() one char
+at a time.
+
+I made an "byLineFast" implementation some time ago that is 10x
+faster than std.stdio.byLine. It reads lines through rawRead, and
+using buffers instead of char by char.
+
+I don't have the time to make it phobos-ready (unicode, etc.).
+But I'll paste it here for any one to use (it works perfectly).
+
+--jm
+*/
+
+
+import std.stdio;
+import std.string: indexOf;
+import core.stdc.string: memmove;
+
+/**
+   Reads by line in an efficient way (10 times faster than File.byLine
+   from std.stdio).
+   This is accomplished by reading entire buffers (fgetc() is not used),
+   and allocating as little as possible.
+
+   The char \n is considered as separator, removing the previous \r
+   if it exists.
+
+   The \n is never returned. The \r is not returned if it was
+   part of a \r\n (but it is returned if it was by itself).
+
+   The returned string is always a substring of a temporary
+   buffer, that must not be stored. If necessary, you must
+   use str[] or .dup or .idup to copy to another string.
+
+   Example:
+
+         File f = File("file.txt");
+         foreach (string line; f.byLineFast) {
+             ...process line...
+             //Make a copy:
+             string copy = line[];
+         }
+
+   The file isn't closed when done iterating, unless it was
+   the only reference to the file (same as std.stdio.byLine).
+   (example: ByLineFast(File("file.txt"))).
+*/
+struct byLineFast {
+     File file;
+     char[] line;
+     bool first_call = true;
+     char[] buffer;
+     char[] strBuffer;
+
+     this(File f, int bufferSize=4096) {
+         assert(bufferSize > 0);
+         file = f;
+         buffer.length = bufferSize;
+     }
+
+      @property bool empty() const {
+         //Its important to check "line !is null" instead of
+         //"line.length != 0", otherwise, no empty lines can
+         //be returned, the iteration would be closed.
+         if (line.ptr !is null) {
+             return false;
+         }
+         if (!file.isOpen) {
+             //Clean the buffer to avoid pointer false positives:
+            (cast(char[])buffer)[] = 0;
+             return true;
+         }
+
+         //First read. Determine if it's empty and put the char back.
+         auto mutableFP = (cast(File*) &file).getFP();
+         auto c = fgetc(mutableFP);
+         if (c == -1) {
+             //Clean the buffer to avoid pointer false positives:
+            (cast(char[])buffer)[] = 0;
+             return true;
+         }
+         if (ungetc(c, mutableFP) != c) {
+             assert(false, "Bug in cstdlib implementation");
+         }
+         return false;
+     }
+
+      @property char[] front() {
+         if (first_call) {
+             popFront();
+             first_call = false;
+         }
+         return line;
+     }
+
+     void popFront() {
+         if (strBuffer.length == 0) {
+             strBuffer = file.rawRead(buffer);
+             if (strBuffer.length == 0) {
+                 file.detach();
+                 line = null;
+                 return;
+             }
+         }
+
+         ulong pos = strBuffer.indexOf('\n');
+         if (pos != -1) {
+             if (pos != 0 && strBuffer[pos-1] == '\r') {
+                 line = strBuffer[0 .. (pos-1)];
+             } else {
+                 line = strBuffer[0 .. pos];
+             }
+             //Pop the line, skipping the terminator:
+             strBuffer = strBuffer[(pos+1) .. $];
+         } else {
+             //More needs to be read here. Copy the tail of the buffer
+             //to the beginning, and try to read with the empty part of
+             //the buffer.
+             //If no buffer was left, extend the size of the buffer before
+             //reading. If the file has ended, then the line is the entire
+             //buffer.
+
+             if (strBuffer.ptr != buffer.ptr) {
+                 //Must use memmove because there might be overlap
+                 memmove(buffer.ptr, strBuffer.ptr, strBuffer.length * char.sizeof);
+             }
+             ulong spaceBegin = strBuffer.length;
+             if (strBuffer.length == buffer.length) {
+                 //Must extend the buffer to keep reading.
+                 assumeSafeAppend(buffer);
+                 buffer.length = buffer.length * 2;
+             }
+             char[] readPart = file.rawRead(buffer[spaceBegin .. $]);
+             if (readPart.length == 0) {
+                 //End of the file. Return whats in the buffer.
+                 //The next popFront() will try to read again, and then
+                 //mark empty condition.
+                 if (spaceBegin != 0 && buffer[spaceBegin-1] == '\r') {
+                     line = buffer[0 .. spaceBegin-1];
+                 } else {
+                     line = buffer[0 .. spaceBegin];
+                 }
+                 strBuffer = null;
+                 return;
+             }
+             strBuffer = buffer[0 .. spaceBegin + readPart.length];
+             //Now that we have new data in strBuffer, we can go on.
+             //If a line isn't found, the buffer will be extended again to read more.
+             popFront();
+         }
+     }
 }
