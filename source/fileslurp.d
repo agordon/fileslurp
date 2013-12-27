@@ -1,6 +1,8 @@
 /**
 Generic Loader for delimited text files.
 
+$(LREF slurpy) is the main function to be used.
+
 Copyright: Copyright 2013 the authors.
 
 License: BSD 3-Clause
