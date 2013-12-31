@@ -133,10 +133,7 @@ unittest
 	if (c in meta)
 		return meta[c];
 
-	//ridiculous - there's got to be a better way
-	char[] tmp;
-	tmp = tmp ~ c;
-	return tmp;
+	return [c];
 }
 
 unittest
@@ -337,34 +334,31 @@ $(OL
 )
 
 */
-template slurpy(MEMBERS, alias STORE_FUNCTION, char delimiter='\t')
+void slurpy(MEMBERS, alias STORE_FUNCTION, char delimiter='\t')(const string filename)
 {
-	static assert (isTuple!MEMBERS,"slurpy: 1st template parameter must be a Tuple with the expected columns in the file"); 
+	static assert (isTuple!MEMBERS,"slurpy: 1st template parameter must be a Tuple with the expected columns in the file");
+	
+	auto f = File(filename);
+	scope(exit) f.close();
+	auto lines=0;
 
-	void slurpy(const string filename)
+	alias unaryFun!STORE_FUNCTION _Fun;
+	MEMBERS data;
+
+	foreach (origline; f.byLineFast())
 	{
-		auto f = File(filename);
-		scope(exit) f.close();
-		auto lines=0;
-
-		alias unaryFun!STORE_FUNCTION _Fun;
-		MEMBERS data;
-
-		foreach (origline; f.byLineFast())
-		{
-			++lines;
-			string line = origline.idup;
-			try {
-				parse_delimited_string(line, delimiter, data);
-				_Fun(data);
-			} catch ( Exception e ) {
-				throw new FileException(filename,text("invalid input at line ", lines,
-							": expected ", data.tupleof.length,
-							" fields ",typeof(data.tupleof).stringof,
-							" delimiter by '",quotemeta(delimiter),
-							"' got '", origline,
-							"' error details: ", e.msg ));
-			}
+		++lines;
+		string line = origline.idup;
+		try {
+			parse_delimited_string(line, delimiter, data);
+			_Fun(data);
+		} catch ( Exception e ) {
+			throw new FileException(filename,text("invalid input at line ", lines,
+						": expected ", data.tupleof.length,
+						" fields ",typeof(data.tupleof).stringof,
+						" delimiter by '",quotemeta(delimiter),
+						"' got '", origline,
+						"' error details: ", e.msg ));
 		}
 	}
 }
@@ -420,13 +414,15 @@ auto data = slurpy_array!('\t', int,int,int)("file.txt");
 Select!(Types.length == 1, Types[0][], Tuple!(Types)[])
 slurpy_array(char delimiter, Types...)(string filename)
 {
-    typeof(return) result;
-    auto app = appender!(typeof(return))();
-    alias ElementType!(typeof(return)) MEMBERS;
+	alias RetT = typeof(return);
+	
+	RetT result;
+	Appender!RetT app;
+	alias MEMBERS = ElementType!RetT;
 
-    slurpy! ( MEMBERS, delegate (x) { app.put(x); }, delimiter ) (filename);
+	slurpy! ( MEMBERS, x => app.put(x) , delimiter ) (filename);
 
-    return app.data;
+	return app.data;
 }
 
 unittest
